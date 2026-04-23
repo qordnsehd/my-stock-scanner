@@ -1,81 +1,96 @@
 import urllib.request
+import re
 import time
 from datetime import datetime
 
-# 테스트용 5종목 (삼성전자, SK하이닉스, 현대차, LG에너지솔루션, 기아)
-TEST_STOCKS = {
-    '005930': '삼성전자',
-    '000660': 'SK하이닉스',
-    '005380': '현대차',
-    '373220': 'LG에너지솔루션',
-    '000270': '기아'
-}
+def get_kospi_list():
+    """네이버 증권에서 코스피 상장사 리스트를 자동으로 가져옵니다."""
+    kospi_list = {}
+    for page in range(1, 35):
+        url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok=0&page={page}"
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            html = urllib.request.urlopen(req).read().decode('cp949')
+            items = re.findall(r'href="/item/main\.naver\?code=(\d{6})".*?>(.*?)</a>', html)
+            if not items: break
+            for code, name in items: kospi_list[code] = name
+        except: break
+        time.sleep(0.01)
+    return kospi_list
 
 def get_stock_data(symbol):
     url = f"https://fchart.stock.naver.com/sise.nhn?symbol={symbol}&timeframe=day&count=300&requestType=0"
     try:
-        response = urllib.request.urlopen(url)
-        xml_data = response.read().decode('euc-kr')
+        req = urllib.request.urlopen(url)
+        xml_data = req.read().decode('euc-kr')
         lines = xml_data.split('<item data="')[1:]
-        prices = []
-        for line in lines:
-            val = line.split('"')[0].split('|')
-            prices.append({'close': int(val[4]), 'high': int(val[2]), 'vol': int(val[5])})
-        return prices
+        return [{'close': int(val.split('|')[4]), 'high': int(val.split('|')[2]), 'vol': int(val.split('|')[5])} 
+                for val in [line.split('"')[0] for line in lines]]
     except: return None
 
 def run_scanner():
+    kospi_stocks = get_kospi_list()
     found_stocks = []
-    print(f"🚀 테스트 모드 시작 (5종목)")
-    
-    for symbol, name in TEST_STOCKS.items():
+    print(f"🚀 코스피 {len(kospi_stocks)}개 전 종목 정밀 분석 시작...")
+
+    for symbol, name in kospi_stocks.items():
         data = get_stock_data(symbol)
         if not data or len(data) < 224: continue
-
+        
         curr, prev = data[-1], data[-2]
-        
-        # 1. 이동평균선
-        ma5 = sum([x['close'] for x in data[-5:]]) / 5
-        ma20 = sum([x['close'] for x in data[-20:]]) / 20
-        ma60 = sum([x['close'] for x in data[-60:]]) / 60
         ma224 = sum([x['close'] for x in data[-224:]]) / 224
-
-        # 2. 조건 검사 (이미지 조건 반영)
-        is_aligned = ma5 > ma20 > ma60  # 정배열
         recent_20_high = max([x['high'] for x in data[-21:-1]])
-        is_breakout = curr['close'] > recent_20_high # 언덕 돌파
         
-        # 테스트를 위해 거래량 조건은 조금 완화(1.1배)해서 넣어둘게요
-        if is_breakout or (curr['close'] > ma224):
-            found_stocks.append({
-                'name': name, 'code': symbol, 'price': curr['close'], 
-                'ma224': round(ma224), 'vol_ratio': round(curr['vol']/prev['vol'], 1)
-            })
-        time.sleep(0.1)
+        # 단테 기법 핵심 필터: 224일선 위 + 20일 언덕 돌파 + 거래량 폭발
+        if curr['close'] > recent_20_high and curr['close'] > ma224:
+            if curr['vol'] > prev['vol'] * 1.5:  # 거래량 150% 이상만 추림
+                found_stocks.append({
+                    'name': name, 'code': symbol, 'price': f"{curr['close']:,}", 
+                    'ma224': f"{int(ma224):,}", 'vol_ratio': round(curr['vol']/prev['vol'], 1)
+                })
+        time.sleep(0.02) # 차단 방지용 미세 지연
 
-    # HTML 생성
+    # --- 실시간 대시보드 HTML 생성 ---
     html_content = f"""
-    <html>
-    <head><meta charset="utf-8"><title>단테 검색기 테스트</title>
-    <style>
-        body {{ font-family: sans-serif; padding: 20px; background-color: #1a1a1a; color: white; }}
-        table {{ border-collapse: collapse; width: 100%; background: #2d2d2d; }}
-        th, td {{ border: 1px solid #444; padding: 12px; text-align: center; }}
-        th {{ background-color: #e74c3c; color: white; }}
-    </style></head>
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>단테 밥그릇 검색기 Pro</title>
+        <style>
+            body {{ background: #0b0e14; color: #e1e1e1; font-family: 'Pretendard', sans-serif; margin: 0; padding: 20px; }}
+            .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f23645; padding-bottom: 15px; margin-bottom: 20px; }}
+            .title {{ color: #f23645; font-size: 20px; font-weight: bold; }}
+            .count {{ background: #2a2e39; padding: 5px 12px; border-radius: 20px; font-size: 14px; }}
+            .card-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; }}
+            .card {{ background: #1e222d; border-radius: 12px; padding: 20px; border: 1px solid #2a2e39; }}
+            .name {{ font-size: 18px; font-weight: bold; margin-bottom: 5px; color: #fff; }}
+            .price {{ font-size: 24px; color: #f23645; font-weight: 800; margin-bottom: 10px; }}
+            .info {{ font-size: 13px; color: #848e9c; display: flex; justify-content: space-between; }}
+            .vol-badge {{ background: rgba(242, 54, 69, 0.1); color: #f23645; padding: 2px 8px; border-radius: 4px; font-weight: bold; }}
+        </style>
+    </head>
     <body>
-        <h1>🎯 5종목 테스트 결과</h1>
-        <p>분석 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        <table>
-            <tr><th>종목명</th><th>코드</th><th>현재가</th><th>224일선</th><th>거래량비율</th></tr>
+        <div class="header">
+            <div class="title">🎯 단테 밥그릇 포착</div>
+            <div class="count">포착: {len(found_stocks)}개</div>
+        </div>
+        <p style="font-size: 12px; color: #848e9c;">업데이트: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (코스피 전체 분석)</p>
+        <div class="card-grid">
     """
     for s in found_stocks:
-        html_content += f"<tr><td>{s['name']}</td><td>{s['code']}</td><td>{s['price']}원</td><td>{s['ma224']}원</td><td>{s['vol_ratio']}배</td></tr>"
-    html_content += "</table></body></html>"
-    
-    with open("index.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
-    print("✅ index.html 생성 완료!")
+        html_content += f"""
+            <div class="card">
+                <div class="name">{s['name']} <span style="font-size:12px; font-weight:normal;">{s['code']}</span></div>
+                <div class="price">{s['price']}원</div>
+                <div class="info">
+                    <span>224일선: {s['ma224']}원</span>
+                    <span class="vol-badge">거래량 {s['vol_ratio']}배 🔥</span>
+                </div>
+            </div>
+        """
+    html_content += "</div></body></html>"
+    with open("index.html", "w", encoding="utf-8") as f: f.write(html_content)
 
-if __name__ == "__main__":
-    run_scanner()
+if __name__ == "__main__": run_scanner()
