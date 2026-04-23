@@ -2,31 +2,27 @@ name: Stock Scanner Web
 
 on:
   schedule:
-    - cron: '0 0 * * 1-5' # 매일 평일 아침 자동 실행
-  workflow_dispatch:      # 수동 실행 버튼
+    - cron: '0 0 * * 1-5'
+  workflow_dispatch:
 
-permissions:               # ✅ 파일 수정을 위해 권한 추가
+permissions:
   contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
       - name: Run Script
         run: python main.py
-
-      - name: Update Web Page    # ✅ 분석 결과를 깃허브에 저장하는 단계
+      - name: Update Web Page
         run: |
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add index.html
-          git commit -m "Update stock analysis results" || exit 0
+          git commit -m "Update results" || exit 0
           git push
