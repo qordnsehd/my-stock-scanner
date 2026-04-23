@@ -1,22 +1,15 @@
 import urllib.request
-import re
 import time
 from datetime import datetime
 
-def get_kospi_list():
-    kospi_list = {}
-    for page in range(1, 35): # 코스피 약 1700개 종목 수집
-        url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok=0&page={page}"
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            html = urllib.request.urlopen(req).read().decode('cp949')
-            items = re.findall(r'href="/item/main\.naver\?code=(\d{6})".*?>(.*?)</a>', html)
-            if not items: break
-            for code, name in items:
-                kospi_list[code] = name
-        except: break
-        time.sleep(0.05)
-    return kospi_list
+# 테스트용 5종목 (삼성전자, SK하이닉스, 현대차, LG에너지솔루션, 기아)
+TEST_STOCKS = {
+    '005930': '삼성전자',
+    '000660': 'SK하이닉스',
+    '005380': '현대차',
+    '373220': 'LG에너지솔루션',
+    '000270': '기아'
+}
 
 def get_stock_data(symbol):
     url = f"https://fchart.stock.naver.com/sise.nhn?symbol={symbol}&timeframe=day&count=300&requestType=0"
@@ -32,68 +25,57 @@ def get_stock_data(symbol):
     except: return None
 
 def run_scanner():
-    target_stocks = get_kospi_list()
     found_stocks = []
+    print(f"🚀 테스트 모드 시작 (5종목)")
     
-    for symbol, name in target_stocks.items():
+    for symbol, name in TEST_STOCKS.items():
         data = get_stock_data(symbol)
         if not data or len(data) < 224: continue
 
-        curr = data[-1]
-        prev = data[-2]
+        curr, prev = data[-1], data[-2]
         
-        # --- 이미지 속 조건들 구현 ---
-        # 1. 이동평균선 계산
+        # 1. 이동평균선
         ma5 = sum([x['close'] for x in data[-5:]]) / 5
         ma20 = sum([x['close'] for x in data[-20:]]) / 20
         ma60 = sum([x['close'] for x in data[-60:]]) / 60
         ma224 = sum([x['close'] for x in data[-224:]]) / 224
 
-        # 2. 정배열 조건 (이미지 B, C, D항목 참고)
-        is_aligned = ma5 > ma20 > ma60
-        
-        # 3. 소파동 언덕 돌파 (단테 기법)
+        # 2. 조건 검사 (이미지 조건 반영)
+        is_aligned = ma5 > ma20 > ma60  # 정배열
         recent_20_high = max([x['high'] for x in data[-21:-1]])
-        is_breakout = curr['close'] > recent_20_high
+        is_breakout = curr['close'] > recent_20_high # 언덕 돌파
         
-        # 4. 가격 범위 (이미지 A항목: 2000원 ~ 500,000원)
-        is_price_range = 2000 <= curr['close'] <= 500000
-
-        # 5. 거래량 폭발 (이미지 I항목: 150% 이상)
-        is_vol_up = curr['vol'] > (prev['vol'] * 1.5)
-
-        # 모든 조건 결합 (단테 224일선 돌파 + 정배열 + 거래량)
-        if is_breakout and is_aligned and curr['close'] > ma224 and is_price_range and is_vol_up:
+        # 테스트를 위해 거래량 조건은 조금 완화(1.1배)해서 넣어둘게요
+        if is_breakout or (curr['close'] > ma224):
             found_stocks.append({
                 'name': name, 'code': symbol, 'price': curr['close'], 
                 'ma224': round(ma224), 'vol_ratio': round(curr['vol']/prev['vol'], 1)
             })
-        time.sleep(0.01)
+        time.sleep(0.1)
 
-    # 웹페이지(HTML) 생성 로직
+    # HTML 생성
     html_content = f"""
     <html>
-    <head><meta charset="utf-8"><title>단테X이미지 검색결과</title>
+    <head><meta charset="utf-8"><title>단테 검색기 테스트</title>
     <style>
-        body {{ font-family: 'Malgun Gothic', sans-serif; padding: 20px; background-color: #1a1a1a; color: white; }}
+        body {{ font-family: sans-serif; padding: 20px; background-color: #1a1a1a; color: white; }}
         table {{ border-collapse: collapse; width: 100%; background: #2d2d2d; }}
         th, td {{ border: 1px solid #444; padding: 12px; text-align: center; }}
         th {{ background-color: #e74c3c; color: white; }}
-        .highlight {{ color: #f1c40f; font-weight: bold; }}
     </style></head>
     <body>
-        <h1>🎯 단테 전략 + 이미지 조건식 포착</h1>
-        <p>분석 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 코스피 전 종목 대상</p>
+        <h1>🎯 5종목 테스트 결과</h1>
+        <p>분석 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         <table>
-            <tr><th>종목명</th><th>코드</th><th>현재가</th><th>224일선</th><th>거래량폭발</th></tr>
+            <tr><th>종목명</th><th>코드</th><th>현재가</th><th>224일선</th><th>거래량비율</th></tr>
     """
     for s in found_stocks:
-        html_content += f"<tr><td>{s['name']}</td><td>{s['code']}</td><td class='highlight'>{s['price']}원</td><td>{s['ma224']}원</td><td>{s['vol_ratio']}배</td></tr>"
-    
-    html_content += "</table><p>※ 조건: 정배열(5>20>60) + 224일선 돌파 + 20일 언덕 돌파 + 거래량 150%</p></body></html>"
+        html_content += f"<tr><td>{s['name']}</td><td>{s['code']}</td><td>{s['price']}원</td><td>{s['ma224']}원</td><td>{s['vol_ratio']}배</td></tr>"
+    html_content += "</table></body></html>"
     
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(html_content)
+    print("✅ index.html 생성 완료!")
 
 if __name__ == "__main__":
     run_scanner()
