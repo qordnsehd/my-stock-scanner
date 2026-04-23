@@ -5,7 +5,7 @@ from datetime import datetime
 
 def get_kospi_list():
     kospi_list = {}
-    for page in range(1, 35):
+    for page in range(1, 35): # 코스피 약 1700개 종목 수집
         url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok=0&page={page}"
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -19,7 +19,7 @@ def get_kospi_list():
     return kospi_list
 
 def get_stock_data(symbol):
-    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={symbol}&timeframe=day&count=250&requestType=0"
+    url = f"https://fchart.stock.naver.com/sise.nhn?symbol={symbol}&timeframe=day&count=300&requestType=0"
     try:
         response = urllib.request.urlopen(url)
         xml_data = response.read().decode('euc-kr')
@@ -39,41 +39,58 @@ def run_scanner():
         data = get_stock_data(symbol)
         if not data or len(data) < 224: continue
 
-        curr, prev = data[-1], data[-2]
-        recent_20_high = max([x['high'] for x in data[-21:-1]])
+        curr = data[-1]
+        prev = data[-2]
+        
+        # --- 이미지 속 조건들 구현 ---
+        # 1. 이동평균선 계산
+        ma5 = sum([x['close'] for x in data[-5:]]) / 5
+        ma20 = sum([x['close'] for x in data[-20:]]) / 20
+        ma60 = sum([x['close'] for x in data[-60:]]) / 60
         ma224 = sum([x['close'] for x in data[-224:]]) / 224
 
-        if curr['close'] > recent_20_high and curr['close'] > ma224 and curr['vol'] > (prev['vol'] * 1.5):
+        # 2. 정배열 조건 (이미지 B, C, D항목 참고)
+        is_aligned = ma5 > ma20 > ma60
+        
+        # 3. 소파동 언덕 돌파 (단테 기법)
+        recent_20_high = max([x['high'] for x in data[-21:-1]])
+        is_breakout = curr['close'] > recent_20_high
+        
+        # 4. 가격 범위 (이미지 A항목: 2000원 ~ 500,000원)
+        is_price_range = 2000 <= curr['close'] <= 500000
+
+        # 5. 거래량 폭발 (이미지 I항목: 150% 이상)
+        is_vol_up = curr['vol'] > (prev['vol'] * 1.5)
+
+        # 모든 조건 결합 (단테 224일선 돌파 + 정배열 + 거래량)
+        if is_breakout and is_aligned and curr['close'] > ma224 and is_price_range and is_vol_up:
             found_stocks.append({
                 'name': name, 'code': symbol, 'price': curr['close'], 
-                'high': recent_20_high, 'vol_ratio': round(curr['vol']/prev['vol'], 1)
+                'ma224': round(ma224), 'vol_ratio': round(curr['vol']/prev['vol'], 1)
             })
         time.sleep(0.01)
 
-    # HTML 파일 생성
+    # 웹페이지(HTML) 생성 로직
     html_content = f"""
     <html>
-    <head>
-        <meta charset="utf-8">
-        <title>단테 검색기 결과</title>
-        <style>
-            body {{ font-family: sans-serif; padding: 20px; background-color: #f4f7f6; }}
-            table {{ border-collapse: collapse; width: 100%; background: white; }}
-            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
-            th {{ background-color: #4CAF50; color: white; }}
-            tr:nth-child(even) {{ background-color: #f2f2f2; }}
-        </style>
-    </head>
+    <head><meta charset="utf-8"><title>단테X이미지 검색결과</title>
+    <style>
+        body {{ font-family: 'Malgun Gothic', sans-serif; padding: 20px; background-color: #1a1a1a; color: white; }}
+        table {{ border-collapse: collapse; width: 100%; background: #2d2d2d; }}
+        th, td {{ border: 1px solid #444; padding: 12px; text-align: center; }}
+        th {{ background-color: #e74c3c; color: white; }}
+        .highlight {{ color: #f1c40f; font-weight: bold; }}
+    </style></head>
     <body>
-        <h1>🔥 단테 조건 검색 포착 종목</h1>
-        <p>최종 분석 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <h1>🎯 단테 전략 + 이미지 조건식 포착</h1>
+        <p>분석 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | 코스피 전 종목 대상</p>
         <table>
-            <tr><th>종목명</th><th>코드</th><th>현재가</th><th>언덕(20일고점)</th><th>거래량비율</th></tr>
+            <tr><th>종목명</th><th>코드</th><th>현재가</th><th>224일선</th><th>거래량폭발</th></tr>
     """
     for s in found_stocks:
-        html_content += f"<tr><td>{s['name']}</td><td>{s['code']}</td><td>{s['price']}원</td><td>{s['high']}원</td><td>{s['vol_ratio']}배</td></tr>"
+        html_content += f"<tr><td>{s['name']}</td><td>{s['code']}</td><td class='highlight'>{s['price']}원</td><td>{s['ma224']}원</td><td>{s['vol_ratio']}배</td></tr>"
     
-    html_content += "</table></body></html>"
+    html_content += "</table><p>※ 조건: 정배열(5>20>60) + 224일선 돌파 + 20일 언덕 돌파 + 거래량 150%</p></body></html>"
     
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(html_content)
